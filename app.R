@@ -375,29 +375,39 @@ server <- function(input, output, session) {
     }
   )
   
-  # --- 5. DIFFERENTIAL EXPRESSION ---
+# --- 5. DIFFERENTIAL EXPRESSION ---
   observeEvent(input$run_de, {
     req(sc_obj(), input$identity_test, input$genotype1, input$genotype2)
     
     withProgress(message = "Calculating Differential Expression...", value = 0, {
       subset_obj <- subset(sc_obj(), idents = c(input$identity_test))
-      subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      
+      if ("genotype" %in% colnames(subset_obj@meta.data)) {
+        subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      }
+      
       incProgress(0.1, detail = "Subsetting data...")
+      
+      vars_to_reg <- intersect(c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"), colnames(subset_obj@meta.data))
       
       subset_obj <- NormalizeData(subset_obj) %>%
         FindVariableFeatures() %>%
-        ScaleData(vars.to.regress = c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"))
+        ScaleData(vars.to.regress = if (length(vars_to_reg) > 0) vars_to_reg else NULL)
       incProgress(0.3, detail = "Normalizing data...")
       
       tryCatch({
-        de_wilcox <- wilcoxauc(subset_obj, group_by = "genotype") %>%
+        expr_mat <- LayerData(subset_obj, layer = "data")
+        group_vec <- subset_obj$genotype
+        
+        # Pass 'y = group_vec'
+        de_wilcox <- wilcoxauc(X = expr_mat, y = group_vec) %>%
           filter(group == input$genotype2) %>%
           mutate(DE = abs(logFC) > log(1.1) & padj < 0.01) %>%
           mutate(DEG = ifelse(DE, feature, NA))
         incProgress(0.7, detail = "Calculating DE...")
         
-        initial_xlim <- c(min(de_wilcox$logFC), max(de_wilcox$logFC))
-        initial_ylim <- c(0, max(-log10(de_wilcox$padj)))
+        initial_xlim <- c(min(de_wilcox$logFC, na.rm = TRUE), max(de_wilcox$logFC, na.rm = TRUE))
+        initial_ylim <- c(0, max(-log10(de_wilcox$padj), na.rm = TRUE))
         
         updateNumericInput(session, "xlim_min", value = round(initial_xlim[1], 2))
         updateNumericInput(session, "xlim_max", value = round(initial_xlim[2], 2))
@@ -439,13 +449,20 @@ server <- function(input, output, session) {
     content = function(file) {
       req(sc_obj(), input$identity_test, input$genotype1, input$genotype2)
       subset_obj <- subset(sc_obj(), idents = c(input$identity_test))
-      subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      if ("genotype" %in% colnames(subset_obj@meta.data)) {
+        subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      }
+      
+      vars_to_reg <- intersect(c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"), colnames(subset_obj@meta.data))
       
       subset_obj <- NormalizeData(subset_obj) %>%
         FindVariableFeatures() %>%
-        ScaleData(vars.to.regress = c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"))
+        ScaleData(vars.to.regress = if (length(vars_to_reg) > 0) vars_to_reg else NULL)
       
-      de_wilcox <- wilcoxauc(subset_obj, group_by = "genotype") %>%
+      expr_mat <- LayerData(subset_obj, layer = "data")
+      group_vec <- subset_obj$genotype
+      
+      de_wilcox <- wilcoxauc(X = expr_mat, y = group_vec) %>%
         filter(group == input$genotype2) %>%
         mutate(DE = abs(logFC) > log(1.1) & padj < 0.01) %>%
         mutate(DEG = ifelse(DE, feature, NA))
@@ -472,20 +489,26 @@ server <- function(input, output, session) {
     content = function(file) {
       req(sc_obj(), input$identity_test, input$genotype1, input$genotype2)
       subset_obj <- subset(sc_obj(), idents = c(input$identity_test))
-      subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      if ("genotype" %in% colnames(subset_obj@meta.data)) {
+        subset_obj <- subset(subset_obj, subset = genotype %in% c(input$genotype1, input$genotype2))
+      }
+      
+      vars_to_reg <- intersect(c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"), colnames(subset_obj@meta.data))
       
       subset_obj <- NormalizeData(subset_obj) %>%
         FindVariableFeatures() %>%
-        ScaleData(vars.to.regress = c("nCount_RNA", "nFeature_RNA", "percent.mt", "S.Score", "G2M.Score", "orig.ident"))
+        ScaleData(vars.to.regress = if (length(vars_to_reg) > 0) vars_to_reg else NULL)
       
-      de_wilcox <- wilcoxauc(subset_obj, group_by = "genotype") %>%
+      expr_mat <- LayerData(subset_obj, layer = "data")
+      group_vec <- subset_obj$genotype
+      
+      de_wilcox <- wilcoxauc(X = expr_mat, y = group_vec) %>%
         filter(group == input$genotype2) %>%
         mutate(DE = abs(logFC) > log(1.1) & padj < 0.01) %>%
         mutate(DEG = ifelse(DE, feature, NA))
       write.csv(de_wilcox, file, row.names = FALSE)
     }
   )
-
   # --- 6. SCATTERPLOT & DIMPLOT DOWNLOADS ---
   output$downloadScatterplot <- downloadHandler(
     filename = function() {
